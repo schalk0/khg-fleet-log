@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Khayalami Fleet Log</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#7f1d1d">
+  <link rel="icon" href="icon-256.svg">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>html,body,#root{height:100%}</style>
+</head>
+<body class="bg-gray-50">
+  <div id="root"></div>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(() => {});
+      });
+    }
+  </script>
+  <script type="text/babel">
+    const {useState,useEffect,useMemo,useRef} = React;
+
+    // Helpers
+    const fmt=(n,d=2)=>Number.isFinite(+n)?(+n).toFixed(d):(d?"0.00":"0");
+    const todayStr=()=>new Date().toISOString().slice(0,10);
+    const uid=()=>Math.random().toString(36).slice(2,10);
+    const nowIso=()=>new Date().toISOString();
+    const DAY_MS=24*3600*1000;
+
+    const STORAGE_KEYS={vehicles:"fleetVehicles:v1",drivers:"fleetDrivers:v1",logs:"fleetLogs:v2"};
+
+    function useLocal(key,initial){
+      const [state,setState]=useState(()=>{try{const raw=localStorage.getItem(key);return raw?JSON.parse(raw):initial;}catch{return initial;}});
+      useEffect(()=>{try{localStorage.setItem(key,JSON.stringify(state));}catch{}},[key,state]);
+      return [state,setState];
+    }
+
+    const sampleVehicles=[{id:uid(),reg:"KHG-TOY-01",make:"Toyota Quantum",year:2020,serviceKm:15000,lastServiceOdo:120000},{id:uid(),reg:"KHG-VW-07",make:"VW Kombi",year:2018,serviceKm:15000,lastServiceOdo:185000}];
+    const sampleDrivers=[{id:uid(),name:"Wayne"},{id:uid(),name:"Hannelie"},{id:uid(),name:"Schalk"}];
+
+    function App(){
+      const [vehicles,setVehicles]=useLocal(STORAGE_KEYS.vehicles,sampleVehicles);
+      const [drivers,setDrivers]=useLocal(STORAGE_KEYS.drivers,sampleDrivers);
+      const [logs,setLogs]=useLocal(STORAGE_KEYS.logs,[]);
+      const [filters,setFilters]=useState({from:todayStr(),to:todayStr(),vehicleId:"",driverId:"",text:""});
+      const [form,setForm]=useState({id:"",date:todayStr(),vehicleId:vehicles[0]?.id||"",driverId:drivers[0]?.id||"",startOdo:"",endOdo:"",fuelLitres:"",fuelCost:"",route:"",notes:"",issues:false,createdAt:""});
+      const formRef=useRef(null);
+
+      const filtered=useMemo(()=>{
+        const from=filters.from?new Date(filters.from):null;
+        const to=filters.to?new Date(filters.to):null;
+        return logs.filter(r=>{
+          const d=new Date(r.date);
+          if(from&&d<from)return false;
+          if(to&&d>new Date(new Date(filters.to).getTime()+DAY_MS-1))return false;
+          if(filters.vehicleId&&r.vehicleId!==filters.vehicleId)return false;
+          if(filters.driverId&&r.driverId!==filters.driverId)return false;
+          const t=`${r.route} ${r.notes}`.toLowerCase();
+          if(filters.text&&!t.includes(filters.text.toLowerCase()))return false;
+          return true;
+        });
+      },[logs,filters]);
+
+      const stats=useMemo(()=>{
+        const km=filtered.reduce((a,r)=>a+Math.max(0,(r.endOdo||0)-(r.startOdo||0)),0);
+        const litres=filtered.reduce((a,r)=>a+(+r.fuelLitres||0),0);
+        const cost=filtered.reduce((a,r)=>a+(+r.fuelCost||0),0);
+        return {km,litres,cost,kmPerL:litres>0?km/litres:0};
+      },[filtered]);
+
+      function resetForm(){setForm(f=>({...f,id:"",date:todayStr(),vehicleId:vehicles[0]?.id||"",driverId:drivers[0]?.id||"",startOdo:"",endOdo:"",fuelLitres:"",fuelCost:"",route:"",notes:"",issues:false,createdAt:""}));}
+
+      function saveLog(e){
+        e?.preventDefault();
+        const payload={...form,id:form.id||uid(),startOdo:+form.startOdo||0,endOdo:+form.endOdo||0,fuelLitres:+form.fuelLitres||0,fuelCost:+form.fuelCost||0,createdAt:form.createdAt||nowIso()};
+        setLogs(prev=>prev.some(x=>x.id===payload.id)?prev.map(x=>x.id===payload.id?payload:x):[payload,...prev]);
+        resetForm();
+      }
+
+      return (<div className="p-6 space-y-6">
+        <h1 className="text-2xl font-bold">Daily Fleet Log</h1>
+        <form onSubmit={saveLog} className="grid md:grid-cols-4 gap-2 bg-white p-4 rounded-xl border">
+          <input type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})} className="border rounded px-2 py-1"/>
+          <select value={form.vehicleId} onChange={e=>setForm({...form,vehicleId:e.target.value})} className="border rounded px-2 py-1">{vehicles.map(v=><option key={v.id} value={v.id}>{v.reg}</option>)}</select>
+          <select value={form.driverId} onChange={e=>setForm({...form,driverId:e.target.value})} className="border rounded px-2 py-1">{drivers.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select>
+          <input placeholder="Route" value={form.route} onChange={e=>setForm({...form,route:e.target.value})} className="border rounded px-2 py-1"/>
+          <input placeholder="Start Odo" value={form.startOdo} onChange={e=>setForm({...form,startOdo:e.target.value})} className="border rounded px-2 py-1"/>
+          <input placeholder="End Odo" value={form.endOdo} onChange={e=>setForm({...form,endOdo:e.target.value})} className="border rounded px-2 py-1"/>
+          <input placeholder="Fuel L" value={form.fuelLitres} onChange={e=>setForm({...form,fuelLitres:e.target.value})} className="border rounded px-2 py-1"/>
+          <input placeholder="Fuel Cost" value={form.fuelCost} onChange={e=>setForm({...form,fuelCost:e.target.value})} className="border rounded px-2 py-1"/>
+          <button className="bg-black text-white px-4 py-2 rounded col-span-2">Save</button>
+        </form>
+        <div className="bg-white rounded-xl border p-4">
+          <h2 className="font-semibold mb-2">Entries ({filtered.length})</h2>
+          <table className="min-w-full text-sm"><thead><tr><th>Date</th><th>Vehicle</th><th>Driver</th><th>KM</th><th>Fuel</th><th>Cost</th></tr></thead>
+            <tbody>{filtered.map(r=><tr key={r.id}><td>{r.date}</td><td>{vehicles.find(v=>v.id===r.vehicleId)?.reg}</td><td>{drivers.find(d=>d.id===r.driverId)?.name}</td><td>{r.endOdo-r.startOdo}</td><td>{r.fuelLitres}</td><td>{r.fuelCost}</td></tr>)}</tbody>
+          </table>
+        </div>
+      </div>);
+    }
+
+    function StatCard({label,value,suffix}){return (<div>{label}: {value} {suffix}</div>);}
+    function VehicleManager(){return null;}
+    function DriverManager(){return null;}
+
+    const root=ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App/>);
+  </script>
+</body>
+</html>
